@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO)
 # --- Configuration ---
 SERVER_URI = "ws://localhost:8000/ws/sensors" 
 # SERVER_URI = os.environ.get("AURA_BACKEND_WS_URL", "ws://localhost:8000/ws/sensors")
-MODEL_PATH = "../aura_backend/emotion_models/" # Relative path to models
+MODEL_PATH = "aura_backend/emotion_models/" # Relative path to models
 
 # --- Model Loading ---
 try:
@@ -137,4 +137,5 @@ if __name__ == "__main__":
             print("Sender stopped by user.")
             break
         except Exception:
+
             pass
