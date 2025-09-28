@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>AURA Audience Poll</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root {
+      --bg:#0e0b17;--panel:#1d1730;--accent:#8b5cf6;--accent2:#f59e0b;--green:#10b981;--danger:#ef4444;--text:#e4ddff;--border:#32264d;
+      font-family: 'Press Start 2P', monospace;
+    }
+    body { margin:0; background: var(--bg); color: var(--text); display:flex; flex-direction:column; min-height:100vh; }
+    header { padding:0.75rem 1rem; background:#150f24; font-size:0.75rem; letter-spacing:1px; }
+    h1 { font-size:0.9rem; margin:0 0 0.75rem; }
+    main { flex:1; padding:1rem; display:flex; flex-direction:column; gap:1rem; max-width:780px; margin: 0 auto; }
+    .card { background: var(--panel); border:2px solid var(--border); padding:1rem; border-radius:4px; box-shadow:0 0 0 2px #000 inset; }
+    .buttons { display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:0.75rem; }
+    button { cursor:pointer; font-family:inherit; font-size:0.6rem; border:2px solid #000; border-radius:4px; padding:0.75rem 0.25rem; background:var(--accent); color:#fff; text-shadow:1px 1px #000; box-shadow:0 3px 0 #000; transition: transform .1s; }
+    button:active { transform:translateY(2px); box-shadow:0 1px 0 #000; }
+    button.alt { background:var(--accent2); }
+    button.calm { background:#2563eb; }
+    button.joy { background:#059669; }
+    button.fear { background:#6d28d9; }
+    button.tension { background:#f59e0b; }
+    button.excitement { background:#dc2626; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:0.5rem; }
+    .tally { background:#120d21; border:1px solid #2d2242; padding:0.5rem 0.6rem; font-size:0.55rem; letter-spacing:0.5px; display:flex; flex-direction:column; gap:0.35rem; }
+    .bar { height:6px; background:#231a39; position:relative; border:1px solid #000; }
+    .bar span { position:absolute; top:0; left:0; height:100%; background:linear-gradient(90deg,var(--accent),var(--accent2)); }
+    footer { text-align:center; font-size:0.5rem; opacity:0.5; padding:0.75rem; }
+    .status { font-size:0.55rem; opacity:0.8; }
+    .disabled { filter:grayscale(.6) brightness(.6); cursor:not-allowed; }
+  </style>
+</head>
+<body>
+  <header>
+    AURA Audience Poll • Cast your mood vote (1 per 3s)
+  </header>
+  <main>
+    <div class="card">
+      <h1>Vote Mood</h1>
+      <div class="buttons" id="voteButtons"></div>
+      <p class="status" id="status">Connecting...</p>
+    </div>
+    <div class="card">
+      <h1>Live Tally</h1>
+      <div class="grid" id="tallyGrid"></div>
+    </div>
+  </main>
+  <footer>Audience votes are engagement-only and do not directly modulate audio (weight = 0 for now).</footer>
+  <script>
+    const moods = ['tension','excitement','fear','joy','calm'];
+    const voteCooldownMs = 3000;
+    let lastVoteTime = 0;
+
+    const btnContainer = document.getElementById('voteButtons');
+    const statusEl = document.getElementById('status');
+    const tallyGrid = document.getElementById('tallyGrid');
+    const tallies = { tension:0, excitement:0, fear:0, joy:0, calm:0 };
+
+    moods.forEach(m => {
+      const b = document.createElement('button');
+      b.textContent = m.toUpperCase();
+      b.className = m;
+      b.addEventListener('click', () => sendVote(m,b));
+      btnContainer.appendChild(b);
+    });
+
+    function renderTallies() {
+      tallyGrid.innerHTML = '';
+      const total = Object.values(tallies).reduce((a,b)=>a+b,0) || 1;
+      moods.forEach(m => {
+        const val = tallies[m];
+        const pct = (val/total)*100;
+        const div = document.createElement('div');
+        div.className = 'tally';
+        div.innerHTML = `<strong>${m}</strong><div>${val} votes</div><div class="bar"><span style="width:${pct.toFixed(1)}%"></span></div>`;
+        tallyGrid.appendChild(div);
+      });
+    }
+    renderTallies();
+
+    const host = window.location.hostname;
+    const port = 8000; // backend port
+    const wsUrl = `ws://${host}:${port}/ws/studio`;
+    let ws;
+    function connect() {
+      ws = new WebSocket(wsUrl);
+      ws.onopen = () => { statusEl.textContent = 'Connected'; };
+      ws.onclose = () => { statusEl.textContent = 'Disconnected. Reconnecting...'; setTimeout(connect, 2000); };
+      ws.onerror = (e) => { statusEl.textContent = 'Error'; console.error(e); };
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === 'vote_ack') {
+            const { mood, tally } = msg.payload;
+            tallies[mood] = tally;
+            renderTallies();
+          } else if (msg.type === 'aura_update') {
+            // could derive audience_votes from payload.source_data.audience_votes for full sync
+            const av = msg.payload?.source_data?.audience_votes;
+            if (av) { Object.assign(tallies, av); renderTallies(); }
+          }
+        } catch (e) { console.warn('Parse fail', e); }
+      };
+    }
+    connect();
+
+    function sendVote(mood, btn) {
+      const now = Date.now();
+      if (now - lastVoteTime < voteCooldownMs) {
+        flashStatus('Wait a moment before voting again.', true);
+        return;
+      }
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        flashStatus('Not connected.', true);
+        return;
+      }
+      lastVoteTime = now;
+      ws.send(JSON.stringify({ type: 'audience_vote', payload: { mood } }));
+      flashStatus(`Voted ${mood}!`);
+      btn.classList.add('disabled');
+      setTimeout(()=>btn.classList.remove('disabled'), voteCooldownMs);
+    }
+
+    function flashStatus(text, warn=false) {
+      statusEl.textContent = text;
+      statusEl.style.color = warn ? '#f87171' : '#8b5cf6';
+      setTimeout(()=>{ statusEl.textContent = 'Connected'; statusEl.style.color=''; }, 1500);
+    }
+  </script>
+</body>
+</html>
